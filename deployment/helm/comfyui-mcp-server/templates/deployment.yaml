@@ -1,0 +1,141 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "comfyui-mcp-server.fullname" . }}
+  labels:
+    {{- include "comfyui-mcp-server.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "comfyui-mcp-server.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- if include "comfyui-mcp-server.createSecret" . }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "comfyui-mcp-server.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "comfyui-mcp-server.serviceAccountName" . }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: PORT
+              value: {{ .Values.containerPort | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.config.logLevel | quote }}
+            - name: COMFYUI_URL
+              value: {{ required "config.comfyuiUrl is required" .Values.config.comfyuiUrl | quote }}
+            - name: COMFYUI_REQUEST_TIMEOUT
+              value: {{ .Values.config.comfyuiRequestTimeout | quote }}
+            - name: WORKFLOWS_DIR
+              value: {{ include "comfyui-mcp-server.workflowsDirs" . | quote }}
+            - name: JOB_TIMEOUT
+              value: {{ .Values.config.jobTimeout | quote }}
+            - name: POLL_INTERVAL
+              value: {{ .Values.config.pollInterval | quote }}
+            - name: PUBLIC_URL
+              value: {{ .Values.config.publicUrl | quote }}
+            - name: INLINE_IMAGES
+              value: {{ .Values.config.inlineImages | quote }}
+            - name: INLINE_MAX_BYTES
+              value: {{ .Values.config.inlineMaxBytes | int64 | quote }}
+            - name: ALLOW_URL_INPUTS
+              value: {{ .Values.config.allowUrlInputs | quote }}
+            - name: ENABLE_RAW_WORKFLOWS
+              value: {{ .Values.config.enableRawWorkflows | quote }}
+            - name: STATELESS_HTTP
+              value: {{ .Values.config.statelessHttp | quote }}
+            - name: ALLOWED_HOSTS
+              value: {{ join "," .Values.config.allowedHosts | quote }}
+            {{- if include "comfyui-mcp-server.secretName" . }}
+            - name: API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "comfyui-mcp-server.secretName" . }}
+                  key: API_TOKEN
+                  optional: true
+            - name: COMFYUI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "comfyui-mcp-server.secretName" . }}
+                  key: COMFYUI_API_KEY
+                  optional: true
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.containerPort }}
+              protocol: TCP
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if include "comfyui-mcp-server.workflowsConfigMap" . }}
+            - name: workflows
+              mountPath: /workflows
+              readOnly: true
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- with include "comfyui-mcp-server.workflowsConfigMap" . }}
+        - name: workflows
+          configMap:
+            name: {{ . }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

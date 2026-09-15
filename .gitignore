@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.env
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+
+# Helm packaging
+*.tgz
+deployment/helm/**/charts/
+deployment/helm/**/Chart.lock
+
+# GitHub Actions
+changelog.md
+release_notes.md

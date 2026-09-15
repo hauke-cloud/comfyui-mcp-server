@@ -1,0 +1,42 @@
+# Metadata for img2img.json.
+title: Image to image
+description: >-
+  Redraw an existing image guided by a text prompt. Lower strength keeps
+  more of the source image. Returns the generated image.
+parameters:
+  image:
+    type: image
+    required: true
+    description: Source image
+    target: Load Image.image
+  prompt:
+    type: string
+    required: true
+    description: What the result should show
+    target: Positive Prompt.text
+  negative_prompt:
+    type: string
+    description: What the result should avoid
+    target: Negative Prompt.text
+  strength:
+    type: number
+    minimum: 0
+    maximum: 1
+    description: How much to change the source image
+    target: KSampler.denoise
+  checkpoint:
+    type: string
+    description: Checkpoint file name in ComfyUI's models/checkpoints directory
+    target: Load Checkpoint.ckpt_name
+  steps:
+    type: integer
+    minimum: 1
+    maximum: 100
+    target: KSampler.steps
+  seed:
+    type: integer
+    minimum: 0
+    randomize: true
+    target: KSampler.seed
+outputs:
+  - Save Image

@@ -1,0 +1,22 @@
+{{- if .Values.envoyGateway.securityPolicy.enabled }}
+{{- if not .Values.httpRoute.enabled }}
+{{- fail "comfyui-mcp-server: envoyGateway.securityPolicy requires httpRoute.enabled" }}
+{{- end }}
+{{- if not .Values.envoyGateway.securityPolicy.spec }}
+{{- fail "comfyui-mcp-server: envoyGateway.securityPolicy.spec must not be empty" }}
+{{- end }}
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: {{ include "comfyui-mcp-server.fullname" . }}
+  labels:
+    {{- include "comfyui-mcp-server.labels" . | nindent 4 }}
+  {{- with .Values.envoyGateway.securityPolicy.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  targetRefs:
+    {{- include "comfyui-mcp-server.httpRouteTargetRef" . | nindent 4 }}
+  {{- toYaml .Values.envoyGateway.securityPolicy.spec | nindent 2 }}
+{{- end }}

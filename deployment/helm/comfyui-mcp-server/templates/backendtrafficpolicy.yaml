@@ -1,0 +1,22 @@
+{{- if .Values.envoyGateway.backendTrafficPolicy.enabled }}
+{{- if not .Values.httpRoute.enabled }}
+{{- fail "comfyui-mcp-server: envoyGateway.backendTrafficPolicy requires httpRoute.enabled" }}
+{{- end }}
+{{- if not .Values.envoyGateway.backendTrafficPolicy.spec }}
+{{- fail "comfyui-mcp-server: envoyGateway.backendTrafficPolicy.spec must not be empty" }}
+{{- end }}
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: {{ include "comfyui-mcp-server.fullname" . }}
+  labels:
+    {{- include "comfyui-mcp-server.labels" . | nindent 4 }}
+  {{- with .Values.envoyGateway.backendTrafficPolicy.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  targetRefs:
+    {{- include "comfyui-mcp-server.httpRouteTargetRef" . | nindent 4 }}
+  {{- toYaml .Values.envoyGateway.backendTrafficPolicy.spec | nindent 2 }}
+{{- end }}
