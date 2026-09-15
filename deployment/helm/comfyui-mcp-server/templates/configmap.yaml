@@ -1,0 +1,13 @@
+{{- if and .Values.workflows.files (not .Values.workflows.existingConfigMap) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "comfyui-mcp-server.fullname" . }}-workflows
+  labels:
+    {{- include "comfyui-mcp-server.labels" . | nindent 4 }}
+data:
+  {{- range $name, $content := .Values.workflows.files }}
+  {{ $name }}: |
+    {{- $content | nindent 4 }}
+  {{- end }}
+{{- end }}

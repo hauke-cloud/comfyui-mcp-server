@@ -1,0 +1,241 @@
+# NOTE: CI rewrites every line containing "tag" followed by a colon in this
+# file to the release version, so that key must only appear under `image`.
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/hauke-cloud/comfyui-mcp-server
+  pullPolicy: IfNotPresent
+  # Overrides the image version, which defaults to the chart appVersion.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Application configuration, rendered as environment variables.
+config:
+  # ComfyUI HTTP API. A path prefix is fine, e.g. llama-swap-comfyui:
+  #   http://llama-swap.ai.svc:8080/upstream/comfyui
+  comfyuiUrl: http://comfyui:8188
+  # Seconds a single ComfyUI request may take. Behind llama-swap the first
+  # request waits for ComfyUI to cold-start, so keep this generous.
+  comfyuiRequestTimeout: 600
+  # Seconds a tool call waits for a job before returning its id to poll with
+  # get_job. Keep it below your MCP clients' tool-call timeout (often 120s):
+  # a client that gives up first never sees the job id.
+  jobTimeout: 110
+  pollInterval: 1
+  # Absolute URL clients reach this service at; used to build output links.
+  # Empty yields relative links (/api/view?...).
+  publicUrl: ""
+  # Return generated images inline in MCP results, within this byte budget.
+  inlineImages: true
+  inlineMaxBytes: 5242880
+  # Let image parameters be fetched from http(s) URLs. The server then makes
+  # requests to caller-chosen hosts, so only enable it where that is acceptable.
+  allowUrlInputs: false
+  # Expose run_raw_workflow, which executes arbitrary caller-supplied graphs.
+  enableRawWorkflows: false
+  # Stateless streamable HTTP needs no sticky sessions across replicas.
+  statelessHttp: true
+  # Host header allow-list for DNS rebinding protection; empty disables it.
+  allowedHosts: []
+  logLevel: info
+
+# Bearer token for /mcp and /api, and the token ComfyUI (or the proxy in
+# front of it) expects. Values set here are stored in a Secret created by the
+# chart. Alternatively point existingSecret at your own Secret with the keys
+# API_TOKEN and/or COMFYUI_API_KEY.
+auth:
+  apiToken: ""
+  comfyuiApiKey: ""
+  existingSecret: ""
+
+workflows:
+  # Keep the example workflows shipped in the image (txt2img, img2img).
+  includeBundled: true
+  # Workflow files rendered into a ConfigMap and mounted at /workflows. Each
+  # workflow is a ComfyUI API-format graph (<name>.json) plus optional
+  # metadata (<name>.yaml), or a single <name>.yaml with an inline
+  # `workflow:` key. Changes are picked up without restarting the pod.
+  files: {}
+  #  sdxl.yaml: |
+  #    title: SDXL text to image
+  #    description: Generate a 1024x1024 image with SDXL.
+  #    parameters:
+  #      prompt:
+  #        type: string
+  #        required: true
+  #        target: Positive Prompt.text
+  #      seed:
+  #        type: integer
+  #        randomize: true
+  #        target: KSampler.seed
+  #    outputs: [Save Image]
+  #  sdxl.json: |
+  #    {"3": {"class_type": "KSampler", "inputs": {...}}, ...}
+  # Mount an existing ConfigMap at /workflows instead of rendering `files`.
+  existingConfigMap: ""
+  # Further directories to scan, e.g. from extraVolumeMounts.
+  extraDirs: []
+
+# Additional environment variables (list of corev1.EnvVar).
+extraEnv: []
+
+extraVolumes: []
+extraVolumeMounts: []
+
+serviceAccount:
+  create: true
+  automount: false
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  port: 8000
+  annotations: {}
+
+containerPort: 8000
+
+ingress:
+  enabled: false
+  className: ""
+  # Tool calls wait for image generation, so raise the controller's read
+  # timeout, e.g. for ingress-nginx:
+  #   nginx.ingress.kubernetes.io/proxy-read-timeout: "1800"
+  annotations: {}
+  hosts:
+    - host: comfyui-mcp.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# Gateway API counterpart of `ingress` above. TLS is terminated on the
+# Gateway listener, not per route.
+httpRoute:
+  # -- Expose the service through a Gateway API HTTPRoute.
+  enabled: false
+  # -- Annotations for the HTTPRoute.
+  annotations: {}
+  # -- Extra labels for the HTTPRoute.
+  labels: {}
+  # -- Gateways this route attaches to.
+  parentRefs:
+    - name: hauke-cloud
+      namespace: envoy-gateway
+  # -- Hostnames served by this route.
+  hostnames:
+    - comfyui-mcp.example.com
+  # A tool call stays open until ComfyUI finishes the job (up to
+  # config.jobTimeout), far beyond Envoy's 15s default, so both timeouts are
+  # disabled. Applied to every rule that does not set its own. Envoy's stream
+  # idle timeout (5m by default) still applies to silent event streams.
+  # -- Per-request timeouts.
+  timeouts:
+    request: 0s
+    backendRequest: 0s
+  # -- Route rules. Empty emits one rule matching everything under `/`.
+  rules: []
+
+# Envoy Gateway policies (gateway.envoyproxy.io/v1alpha1) attached to the
+# HTTPRoute above, so the gateway can authenticate and bound callers before
+# requests reach the pod. Each renders `spec` verbatim and fills in targetRefs;
+# both require httpRoute.enabled.
+envoyGateway:
+  securityPolicy:
+    # -- Render a SecurityPolicy for the HTTPRoute.
+    enabled: false
+    annotations: {}
+    # -- SecurityPolicy spec without targetRefs (jwt, oidc, apiKeyAuth,
+    # basicAuth, extAuth, cors, authorization).
+    spec: {}
+    # Validate Keycloak access tokens and let MCP clients send them as bearer
+    # tokens, instead of (or in addition to) auth.apiToken:
+    #  jwt:
+    #    providers:
+    #      - name: keycloak
+    #        issuer: https://id.hauke.cloud/realms/cloud
+    #        audiences: [comfyui-mcp]
+    #        remoteJWKS:
+    #          uri: https://id.hauke.cloud/realms/cloud/protocol/openid-connect/certs
+    #  authorization:
+    #    defaultAction: Deny
+    #    rules:
+    #      - name: mcp-users
+    #        action: Allow
+    #        principal:
+    #          jwt:
+    #            provider: keycloak
+    #            claims:
+    #              - name: groups
+    #                valueType: StringArray
+    #                values: [comfyui]
+  backendTrafficPolicy:
+    # -- Render a BackendTrafficPolicy for the HTTPRoute.
+    enabled: false
+    annotations: {}
+    # -- BackendTrafficPolicy spec without targetRefs (rateLimit, timeout,
+    # retry, circuitBreaker, loadBalancer, ...).
+    spec: {}
+    # One GPU renders one job at a time, so bound runaway agent loops:
+    #  rateLimit:
+    #    type: Local
+    #    local:
+    #      rules:
+    #        - limit:
+    #            requests: 30
+    #            unit: Minute
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
+
+# /healthz and /readyz never contact ComfyUI: behind llama-swap that would
+# load ComfyUI and evict whatever model is running.
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 20
+
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: http
+  initialDelaySeconds: 3
+  periodSeconds: 10
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

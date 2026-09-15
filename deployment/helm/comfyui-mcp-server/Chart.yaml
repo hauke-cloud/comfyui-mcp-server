@@ -1,0 +1,18 @@
+apiVersion: v2
+name: comfyui-mcp-server
+description: MCP server and REST API that serve ComfyUI workflows as tools over streamable HTTP
+type: application
+# version and appVersion are rewritten by CI from the git tag.
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/hauke-cloud/comfyui-mcp-server
+sources:
+  - https://github.com/hauke-cloud/comfyui-mcp-server
+keywords:
+  - mcp
+  - comfyui
+  - stable-diffusion
+  - model-context-protocol
+maintainers:
+  - name: hauke-cloud
+    url: https://github.com/hauke-cloud

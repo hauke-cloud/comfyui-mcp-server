@@ -1,0 +1,44 @@
+comfyui-mcp-server has been deployed, serving workflows from ComfyUI at
+{{ .Values.config.comfyuiUrl }}.
+
+1. Inside the cluster:
+
+   MCP (streamable HTTP): http://{{ include "comfyui-mcp-server.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}/mcp
+   REST API:              http://{{ include "comfyui-mcp-server.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}/api/workflows
+
+{{- if .Values.ingress.enabled }}
+
+2. Ingress endpoints:
+{{- range .Values.ingress.hosts }}
+   http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}/mcp
+{{- end }}
+{{- end }}
+{{- if .Values.httpRoute.enabled }}
+
+{{ if .Values.ingress.enabled }}3{{ else }}2{{ end }}. HTTPRoute endpoints (TLS depends on the parent Gateway listener):
+{{- range .Values.httpRoute.hostnames }}
+   https://{{ . }}/mcp
+{{- end }}
+{{- end }}
+{{- if not (or .Values.ingress.enabled .Values.httpRoute.enabled) }}
+
+2. For local access, port-forward the service:
+
+   kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "comfyui-mcp-server.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+
+   Then point your MCP client at http://127.0.0.1:{{ .Values.service.port }}/mcp
+{{- end }}
+{{- if include "comfyui-mcp-server.secretName" . }}
+
+Requests to /mcp and /api need the header "Authorization: Bearer <API_TOKEN>"
+from Secret {{ include "comfyui-mcp-server.secretName" . }}.
+{{- end }}
+{{- if .Values.envoyGateway.securityPolicy.enabled }}
+
+Requests through the HTTPRoute are authorized by SecurityPolicy {{ include "comfyui-mcp-server.fullname" . }}.
+{{- end }}
+{{- if not (or (include "comfyui-mcp-server.secretName" .) .Values.envoyGateway.securityPolicy.enabled) }}
+
+WARNING: neither auth.apiToken nor envoyGateway.securityPolicy is set, so
+anyone who can reach the service can run workflows on your ComfyUI.
+{{- end }}

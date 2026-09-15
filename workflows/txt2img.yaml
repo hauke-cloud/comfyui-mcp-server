@@ -1,0 +1,49 @@
+# Metadata for txt2img.json. Targets address node inputs as
+# "<node id or node title>.<input name>"; titles survive re-exports better.
+title: Text to image
+description: >-
+  Generate an image from a text prompt with a Stable Diffusion checkpoint.
+  Returns the generated image.
+parameters:
+  prompt:
+    type: string
+    required: true
+    description: What the image should show
+    target: Positive Prompt.text
+  negative_prompt:
+    type: string
+    description: What the image should avoid
+    target: Negative Prompt.text
+  checkpoint:
+    type: string
+    description: Checkpoint file name in ComfyUI's models/checkpoints directory
+    target: Load Checkpoint.ckpt_name
+  width:
+    type: integer
+    minimum: 64
+    maximum: 2048
+    target: Empty Latent Image.width
+  height:
+    type: integer
+    minimum: 64
+    maximum: 2048
+    target: Empty Latent Image.height
+  steps:
+    type: integer
+    minimum: 1
+    maximum: 100
+    target: KSampler.steps
+  cfg:
+    type: number
+    minimum: 0
+    maximum: 30
+    description: Classifier-free guidance scale
+    target: KSampler.cfg
+  seed:
+    type: integer
+    minimum: 0
+    randomize: true
+    target: KSampler.seed
+# Only return what the Save Image node wrote.
+outputs:
+  - Save Image

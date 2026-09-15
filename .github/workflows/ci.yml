@@ -1,0 +1,99 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+    tags: ["v*"]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  PYTHON_VERSION: "3.13"
+  CHART_PATH: ./deployment/helm/comfyui-mcp-server
+
+jobs:
+  helm-lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: "latest"
+
+      # The shared action packages the chart but never lints or renders it,
+      # so a broken template would otherwise only surface at install time.
+      - name: Lint and render the chart
+        run: |
+          set -euo pipefail
+          helm lint "$CHART_PATH"
+          helm template ci "$CHART_PATH" > /dev/null
+          helm template ci "$CHART_PATH" \
+            --set auth.apiToken=ci \
+            --set httpRoute.enabled=true \
+            --set ingress.enabled=true \
+            --set autoscaling.enabled=true \
+            --set envoyGateway.securityPolicy.enabled=true \
+            --set envoyGateway.securityPolicy.spec.cors.allowOrigins[0]=https://example.com \
+            --set envoyGateway.backendTrafficPolicy.enabled=true \
+            --set envoyGateway.backendTrafficPolicy.spec.timeout.http.requestTimeout=0s \
+            --set-file 'workflows.files.ci\.json=workflows/txt2img.json' > /dev/null
+
+      # CI rewrites every "tag:" line in values.yaml to the release version.
+      - name: Guard values.yaml against the image tag rewrite
+        run: |
+          count="$(grep -c 'tag:' "$CHART_PATH/values.yaml")"
+          [ "$count" -eq 1 ] || { echo "values.yaml must contain exactly one 'tag:' line, found $count" >&2; exit 1; }
+
+  build-and-release:
+    runs-on: ubuntu-latest
+    needs: helm-lint
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+
+    steps:
+      - name: Build, Test, and Release
+        uses: hauke-cloud/inpacken-un-af-dor-mit@v1
+        with:
+          # Language
+          language: "python"
+          language-version: ${{ env.PYTHON_VERSION }}
+
+          # Container Build
+          dockerfile-path: "./Dockerfile"
+          docker-context: "."
+          platforms: "linux/amd64,linux/arm64"
+
+          # Registry
+          registry: "ghcr.io"
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+          image-name: ${{ github.repository }}
+          # Branch builds publish the chart as 0.0.0-dev-<sha> and point its
+          # image at that same tag, which the action's default tag set does
+          # not produce (it only emits sha-<sha>). Push it so the chart pulls.
+          additional-tags: |
+            type=raw,value=0.0.0-dev-{{sha}},enable=${{ !startsWith(github.ref, 'refs/tags/') }}
+
+          # Helm
+          enable-helm: "true"
+          helm-chart-path: "./deployment/helm"
+          helm-chart-name: "comfyui-mcp-server"
+
+          # Testing / Linting
+          run-tests: "true"
+          test-command: "pytest"
+          enable-coverage: "false"
+          run-lint: "true"
+          lint-command: "ruff check . && ruff format --check ."
+
+          # Build Arguments
+          build-args: |
+            PYTHON_VERSION=${{ env.PYTHON_VERSION }}
+
+          # Release
+          enable-release: "true"
+          release-draft: "false"
