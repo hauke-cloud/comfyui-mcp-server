@@ -14,7 +14,7 @@ REST client ─/api──┘         │
 - **Streamable HTTP**, stateless by default, so replicas need no sticky sessions
 - **Workflows as tools** with JSON-schema parameters, defaults, ranges and enums
 - **Results inline**: generated images come back as MCP image content plus download URLs
-- **Image inputs** as base64/data URI, a previous job's output, or (opt-in) a URL
+- **Image inputs** via signed upload URLs, base64/data URI, a previous job's output, or (opt-in) a URL
 - **Hot reload**: edited workflow files and remounted ConfigMaps are picked up live
 - **Bearer auth**, probes that never touch ComfyUI, OCI image and Helm chart
 
@@ -77,10 +77,28 @@ outputs: [Save Image]       # only return these nodes' files (default: all)
 
 | Value | Meaning |
 |---|---|
+| `input:<filename>` | a file already in ComfyUI's input directory, e.g. from an upload (below) |
 | `iVBORw0…` / `data:image/png;base64,…` | inline image |
 | `output:<subfolder>/<filename>` | reuse a previous job's output (chain workflows) |
-| `input:<filename>` | a file already in ComfyUI's input directory |
 | `https://…` | fetched by the server, only with `ALLOW_URL_INPUTS=true` |
+
+### Uploading local images
+
+Base64 puts every byte of the image into the model's tool-call arguments,
+which is slow, expensive and easily truncated for photos. Clients with a shell
+or HTTP client should upload instead:
+
+1. `create_upload_url` returns a short-lived URL (`UPLOAD_URL_TTL`) and the
+   command to use.
+2. `curl -sS -T photo.jpg 'https://…/uploads/<token>'` sends the raw file and
+   answers `{"image": "input:mcp_upload_….jpg"}`.
+3. That value goes into the workflow's image parameter.
+
+The URL's HMAC token authenticates the upload, so `/uploads/` needs no bearer
+token and the shell never sees it. Tokens are signed with `UPLOAD_SECRET`,
+falling back to `API_TOKEN`; with several replicas set one of them. REST
+clients can also `POST /api/uploads` with the bearer token. Uploads must be
+PNG, JPEG, WebP, GIF, BMP or TIFF and at most `MAX_UPLOAD_BYTES`.
 
 The image ships two examples, [`txt2img`](workflows/txt2img.yaml) and
 [`img2img`](workflows/img2img.yaml), built on the stock SD 1.5 graph.
@@ -95,6 +113,7 @@ The image ships two examples, [`txt2img`](workflows/txt2img.yaml) and
 | `get_job` | status and outputs of a job, waiting by default |
 | `cancel_job` | drop a queued job or interrupt a running one |
 | `queue_status` | what ComfyUI is running and has queued |
+| `create_upload_url` | a signed URL for uploading a local image file |
 | `run_raw_workflow` | arbitrary API-format graph, only with `ENABLE_RAW_WORKFLOWS=true` |
 
 A tool call waits up to `JOB_TIMEOUT` and sends progress notifications while
@@ -123,6 +142,8 @@ claude mcp add --transport http comfyui https://comfyui-mcp.example.com/mcp \
 | `DELETE` | `/api/jobs/{id}` | cancel |
 | `GET` | `/api/queue` | ComfyUI queue |
 | `GET` | `/api/view?filename=&subfolder=&type=` | download an output file |
+| `POST`/`PUT` | `/api/uploads` | raw image body; returns `{"image": "input:…"}` |
+| `POST`/`PUT` | `/uploads/{token}` | same, authenticated by a `create_upload_url` token |
 | `GET` | `/healthz`, `/readyz` | probes (unauthenticated, never call ComfyUI) |
 
 ```bash
@@ -149,6 +170,9 @@ parameters, `4xx`/`502` rejected by or unable to reach ComfyUI.
 | `INLINE_IMAGES` | `true` | return images inline in MCP results |
 | `INLINE_MAX_BYTES` | `5242880` | total inline image budget per result |
 | `ALLOW_URL_INPUTS` | `false` | let image parameters be fetched from URLs |
+| `UPLOAD_SECRET` | `API_TOKEN` | key signing upload URLs; per-process random when both are empty |
+| `UPLOAD_URL_TTL` | `600` | seconds an upload URL stays valid |
+| `MAX_UPLOAD_BYTES` | `52428800` | largest accepted upload |
 | `ENABLE_RAW_WORKFLOWS` | `false` | expose `run_raw_workflow` |
 | `STATELESS_HTTP` | `true` | stateless streamable HTTP |
 | `ALLOWED_HOSTS` | | comma-separated `Host` allow-list (DNS rebinding protection) |

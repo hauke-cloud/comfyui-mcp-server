@@ -62,8 +62,11 @@ class Parameter:
         schema: dict[str, Any] = {}
         if self.type == "image":
             schema["type"] = "string"
-            accepted = "a base64 string or data: URI, an http(s) URL if the server allows it, or"
-            hint = f"{accepted} 'output:<subfolder>/<filename>' to reuse a previous job's output"
+            hint = (
+                "'input:<filename>' from create_upload_url for local files, "
+                "'output:<subfolder>/<filename>' to reuse a previous job's output, "
+                "a base64 string or data: URI, or an http(s) URL if the server allows it"
+            )
             schema["description"] = f"{self.description} ({hint})".strip()
         else:
             schema["type"] = self.type

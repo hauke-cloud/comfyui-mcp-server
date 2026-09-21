@@ -65,6 +65,11 @@ class Settings:
     # Allow parameters of type image to be fetched from http(s) URLs. Off by
     # default because it lets callers make the server issue arbitrary requests.
     allow_url_inputs: bool = False
+    # Key for signing upload URLs (create_upload_url). Falls back to api_token;
+    # with neither, a per-process key only works with a single replica.
+    upload_secret: str = ""
+    upload_url_ttl: float = 600.0
+    max_upload_bytes: int = 50 * 1024 * 1024
     # Expose run_raw_workflow, which executes arbitrary API-format graphs.
     enable_raw_workflows: bool = False
 
@@ -91,6 +96,9 @@ class Settings:
             inline_images=_bool("INLINE_IMAGES", cls.inline_images),
             inline_max_bytes=_int("INLINE_MAX_BYTES", cls.inline_max_bytes),
             allow_url_inputs=_bool("ALLOW_URL_INPUTS", cls.allow_url_inputs),
+            upload_secret=os.environ.get("UPLOAD_SECRET", ""),
+            upload_url_ttl=_float("UPLOAD_URL_TTL", cls.upload_url_ttl),
+            max_upload_bytes=_int("MAX_UPLOAD_BYTES", cls.max_upload_bytes),
             enable_raw_workflows=_bool("ENABLE_RAW_WORKFLOWS", cls.enable_raw_workflows),
             stateless_http=_bool("STATELESS_HTTP", cls.stateless_http),
             allowed_hosts=_list("ALLOWED_HOSTS", []),

@@ -66,6 +66,10 @@ spec:
               value: {{ .Values.config.inlineMaxBytes | int64 | quote }}
             - name: ALLOW_URL_INPUTS
               value: {{ .Values.config.allowUrlInputs | quote }}
+            - name: UPLOAD_URL_TTL
+              value: {{ .Values.config.uploadUrlTtl | quote }}
+            - name: MAX_UPLOAD_BYTES
+              value: {{ .Values.config.maxUploadBytes | int64 | quote }}
             - name: ENABLE_RAW_WORKFLOWS
               value: {{ .Values.config.enableRawWorkflows | quote }}
             - name: STATELESS_HTTP
@@ -84,6 +88,12 @@ spec:
                 secretKeyRef:
                   name: {{ include "comfyui-mcp-server.secretName" . }}
                   key: COMFYUI_API_KEY
+                  optional: true
+            - name: UPLOAD_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "comfyui-mcp-server.secretName" . }}
+                  key: UPLOAD_SECRET
                   optional: true
             {{- end }}
             {{- with .Values.extraEnv }}

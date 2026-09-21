@@ -86,7 +86,7 @@ the HTTPRoute equivalent of the Ingress default.
 {{- end }}
 
 {{/*
-Name of the Secret holding API_TOKEN / COMFYUI_API_KEY, empty when there is none.
+Name of the Secret holding API_TOKEN / COMFYUI_API_KEY / UPLOAD_SECRET, empty when there is none.
 */}}
 {{- define "comfyui-mcp-server.secretName" -}}
 {{- if .Values.auth.existingSecret -}}
@@ -100,7 +100,7 @@ Name of the Secret holding API_TOKEN / COMFYUI_API_KEY, empty when there is none
 Non-empty when the chart renders its own Secret.
 */}}
 {{- define "comfyui-mcp-server.createSecret" -}}
-{{- if and (not .Values.auth.existingSecret) (or .Values.auth.apiToken .Values.auth.comfyuiApiKey) -}}
+{{- if and (not .Values.auth.existingSecret) (or .Values.auth.apiToken .Values.auth.comfyuiApiKey .Values.auth.uploadSecret) -}}
 true
 {{- end -}}
 {{- end }}

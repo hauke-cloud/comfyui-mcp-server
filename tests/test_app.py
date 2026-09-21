@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import base64
+import json
 import time
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from functools import partial
+from urllib.parse import urlsplit
 
 import anyio
 import httpx2
@@ -11,6 +14,9 @@ from mcp import Client
 
 from comfyui_mcp_server.app import create_app
 from comfyui_mcp_server.mcp_server import create_mcp_server
+from comfyui_mcp_server.uploads import UploadSigner, image_suffix
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
 
 
 @asynccontextmanager
@@ -147,3 +153,43 @@ async def test_mcp_cold_start_counts_against_job_timeout(make_services, fake_com
     assert result.structured_content["status"] == "running"
     assert "get_job" in result.content[1].text
     assert any("starting up" in (message or "") for _, message in reports)
+
+
+async def test_signed_uploads(make_services, settings, fake_comfyui) -> None:
+    settings = replace(settings, api_token="s3cret")
+    make_services = partial(make_services, api_token="s3cret")
+    services = make_services()
+    async with Client(create_mcp_server(services)) as client:
+        issued = json.loads((await client.call_tool("create_upload_url", {})).content[0].text)
+    await services.aclose()
+    path = urlsplit(issued["upload_url"]).path
+    assert issued["upload_url"].startswith("https://mcp.example.com/uploads/")
+
+    async with serve(make_services, settings) as http:
+        # The signed URL stands in for the bearer token.
+        response = await http.put(path, content=PNG)
+        assert response.status_code == 201
+        assert response.json() == {"image": "input:upload_0.png", "bytes": len(PNG)}
+        sent = next(r for r in fake_comfyui.requests if r.url.path.endswith("/upload/image"))
+        assert b"mcp_upload_" in sent.content and b".png" in sent.content
+
+        assert (await http.put(path, content=b"not an image")).status_code == 415
+        assert (await http.put(path[:-1] + "0", content=PNG)).status_code == 403
+        assert (await http.put(path, content=PNG, headers={"content-type": "multipart/form-data"})).status_code == 415
+
+        assert (await http.post("/api/uploads", content=PNG)).status_code == 401
+        authorized = await http.post("/api/uploads", content=PNG, headers={"Authorization": "Bearer s3cret"})
+        assert authorized.json()["image"] == "input:upload_1.png"
+
+    async with serve(partial(make_services, max_upload_bytes=8), settings) as http:
+        assert (await http.put(path, content=PNG)).status_code == 413
+
+
+def test_upload_tokens_expire_and_bind_to_the_key() -> None:
+    token, _ = UploadSigner("key", ttl=60).issue()
+    assert UploadSigner("key", ttl=60).verify(token)
+    assert UploadSigner("other", ttl=60).verify(token) is None
+    assert UploadSigner("key", ttl=-1).verify(UploadSigner("key", ttl=-1).issue()[0]) is None
+    assert UploadSigner("key", ttl=60).verify("garbage") is None
+    assert image_suffix(b"RIFF\x00\x00\x00\x00WEBPVP8 ") == ".webp"
+    assert image_suffix(b"\xff\xd8\xff\xe0") == ".jpg"

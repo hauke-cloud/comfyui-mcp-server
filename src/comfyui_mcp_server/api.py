@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 from typing import Any
 
 from starlette.requests import Request
@@ -12,6 +13,7 @@ from starlette.routing import Route
 
 from .comfyui import ComfyUIError
 from .services import Services
+from .uploads import image_suffix
 from .workflows import WorkflowInputError
 
 
@@ -125,6 +127,38 @@ def create_routes(services: Services) -> list[Route]:
         }
         return Response(upstream.content, headers=headers)
 
+    async def store_upload(request: Request, stem: str) -> Response:
+        # Raw bodies only (curl -T / --data-binary): multipart would need an extra dependency.
+        if request.headers.get("content-type", "").startswith("multipart/"):
+            return JSONResponse(
+                {"error": "send the raw file as the request body, e.g. curl -T photo.jpg <url>"}, status_code=415
+            )
+        chunks, size = [], 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > settings.max_upload_bytes:
+                return JSONResponse({"error": f"upload exceeds {settings.max_upload_bytes} bytes"}, status_code=413)
+            chunks.append(chunk)
+        data = b"".join(chunks)
+        suffix = image_suffix(data)
+        if suffix is None:
+            return JSONResponse({"error": "not a PNG, JPEG, WebP, GIF, BMP or TIFF image"}, status_code=415)
+        try:
+            name = await services.client.upload(data, f"{stem}{suffix}")
+        except ComfyUIError as exc:
+            return _comfyui_error(exc)
+        return JSONResponse({"image": f"input:{name}", "bytes": size}, status_code=201)
+
+    async def upload(request: Request) -> Response:
+        return await store_upload(request, f"mcp_upload_{uuid.uuid4().hex}")
+
+    async def signed_upload(request: Request) -> Response:
+        nonce = services.uploads.verify(request.path_params["token"])
+        if nonce is None:
+            return JSONResponse({"error": "upload URL is invalid or expired"}, status_code=403)
+        # Named after the token, so repeating an upload replaces the file instead of adding one.
+        return await store_upload(request, f"mcp_upload_{nonce}")
+
     return [
         Route("/healthz", healthz, methods=["GET"]),
         Route("/readyz", readyz, methods=["GET"]),
@@ -135,4 +169,7 @@ def create_routes(services: Services) -> list[Route]:
         Route("/api/jobs/{job_id}", cancel_job, methods=["DELETE"]),
         Route("/api/queue", queue, methods=["GET"]),
         Route("/api/view", view, methods=["GET"]),
+        Route("/api/uploads", upload, methods=["POST", "PUT"]),
+        # Outside /api/: the signed token authenticates, not the bearer token.
+        Route("/uploads/{token}", signed_upload, methods=["POST", "PUT"]),
     ]

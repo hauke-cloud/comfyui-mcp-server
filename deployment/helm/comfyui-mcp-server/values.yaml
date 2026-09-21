@@ -35,6 +35,12 @@ config:
   # Let image parameters be fetched from http(s) URLs. The server then makes
   # requests to caller-chosen hosts, so only enable it where that is acceptable.
   allowUrlInputs: false
+  # Lifetime in seconds of the upload URLs handed out by create_upload_url, and
+  # the largest accepted upload. Uploads go to /uploads/<token>, authenticated
+  # by the token rather than the bearer token; a gateway policy that requires
+  # JWTs on every path must let that prefix through.
+  uploadUrlTtl: 600
+  maxUploadBytes: 52428800
   # Expose run_raw_workflow, which executes arbitrary caller-supplied graphs.
   enableRawWorkflows: false
   # Stateless streamable HTTP needs no sticky sessions across replicas.
@@ -46,10 +52,13 @@ config:
 # Bearer token for /mcp and /api, and the token ComfyUI (or the proxy in
 # front of it) expects. Values set here are stored in a Secret created by the
 # chart. Alternatively point existingSecret at your own Secret with the keys
-# API_TOKEN and/or COMFYUI_API_KEY.
+# API_TOKEN, COMFYUI_API_KEY and/or UPLOAD_SECRET.
 auth:
   apiToken: ""
   comfyuiApiKey: ""
+  # Key signing upload URLs; defaults to apiToken. Set one of them when
+  # running several replicas, or a URL only works on the replica that issued it.
+  uploadSecret: ""
   existingSecret: ""
 
 workflows:

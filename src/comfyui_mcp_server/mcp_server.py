@@ -29,7 +29,9 @@ overview. Workflow tools wait for the result and return the generated files
 (inline images plus download URLs). A long job returns its job_id with status
 pending or running instead: call get_job with that id to keep waiting. To feed
 an output into another workflow's image parameter, pass
-"output:<subfolder>/<filename>" using the values from the result."""
+"output:<subfolder>/<filename>" using the values from the result. To use a
+local image file, call create_upload_url, upload the file with the returned
+command and pass the "image" value from its response instead of base64."""
 
 _JOB_ID = {"type": "string", "description": "Job id returned by a workflow tool"}
 _WAIT = {
@@ -104,6 +106,22 @@ def create_mcp_server(services: Services) -> Server[Any]:
         await runner.cancel(args["job_id"])
         return _text((await runner.status(args["job_id"])).to_dict())
 
+    async def create_upload_url(ctx: ServerRequestContext[Any], args: dict[str, Any]) -> types.CallToolResult:
+        token, expires = services.uploads.issue()
+        base = settings.public_url
+        if not base and ctx.request is not None:
+            base = str(ctx.request.base_url).rstrip("/")
+        url = f"{base}/uploads/{token}"
+        return _text(
+            {
+                "upload_url": url,
+                "method": "PUT",
+                "expires_at": expires,
+                "command": f"curl -sS --fail-with-body -T <file> '{url}'",
+                "response": '{"image": "input:<filename>"}; pass that value as the workflow\'s image parameter',
+            }
+        )
+
     async def queue_status(ctx: ServerRequestContext[Any], args: dict[str, Any]) -> types.CallToolResult:
         state = await services.client.queue()
         return _text({"running": state.running, "pending": state.pending})
@@ -155,6 +173,19 @@ def create_mcp_server(services: Services) -> Server[Any]:
                 annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=True),
             ),
             cancel_job,
+        ),
+        "create_upload_url": (
+            types.Tool(
+                name="create_upload_url",
+                description=(
+                    "Get a short-lived URL for uploading a local image file, instead of passing it as base64. "
+                    "Send the raw file with the returned command (curl -T <file> <url>); the response's 'image' "
+                    "value ('input:<filename>') goes into a workflow's image parameter. One URL per image."
+                ),
+                input_schema=_object({}),
+                annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=False),
+            ),
+            create_upload_url,
         ),
         "queue_status": (
             types.Tool(
