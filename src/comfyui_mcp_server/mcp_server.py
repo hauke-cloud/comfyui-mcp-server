@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any
@@ -15,7 +16,7 @@ from mcp.shared.exceptions import MCPError
 
 from . import __version__
 from .comfyui import ComfyUIError
-from .runner import JobResult
+from .runner import JobResult, ProgressCallback
 from .services import Services
 from .workflows import WorkflowInputError
 
@@ -54,13 +55,17 @@ def _text(data: Any, *, is_error: bool = False) -> types.CallToolResult:
 def create_mcp_server(services: Services) -> Server[Any]:
     settings, registry, runner = services.settings, services.registry, services.runner
 
-    async def job_result(ctx: ServerRequestContext[Any], result: JobResult, wait: bool) -> types.CallToolResult:
+    async def job_result(
+        ctx: ServerRequestContext[Any], result: JobResult, wait: bool, started: float | None = None
+    ) -> types.CallToolResult:
         if wait and not result.finished:
-
-            async def progress(elapsed: float, message: str) -> None:
-                await ctx.session.report_progress(elapsed, None, message)
-
-            result = await runner.wait(result.job_id, settings.job_timeout, progress)
+            # One budget for the whole call: time spent submitting (a ComfyUI
+            # cold start) comes off the wait, so the call still returns the
+            # job id before the client's tool timeout.
+            spent = time.monotonic() - started if started is not None else 0.0
+            result = await runner.wait(
+                result.job_id, max(settings.job_timeout - spent, 0.0), _progress(ctx, offset=spent)
+            )
 
         data = result.to_dict()
         content: list[types.ContentBlock] = [types.TextContent(text=json.dumps(data, indent=2))]
@@ -83,12 +88,14 @@ def create_mcp_server(services: Services) -> Server[Any]:
         workflow = registry.get(args.get("workflow", ""))
         if workflow is None:
             return _text(f"unknown workflow {args.get('workflow')!r}; call list_workflows", is_error=True)
-        job_id, values = await runner.submit(workflow, args.get("parameters"), args.get("overrides"))
-        return await job_result(ctx, _queued(job_id, workflow.name, values), args.get("wait", True))
+        started = time.monotonic()
+        job_id, values = await runner.submit(workflow, args.get("parameters"), args.get("overrides"), _progress(ctx))
+        return await job_result(ctx, _queued(job_id, workflow.name, values), args.get("wait", True), started)
 
     async def run_raw_workflow(ctx: ServerRequestContext[Any], args: dict[str, Any]) -> types.CallToolResult:
-        job_id = await runner.submit_graph(args["workflow"])
-        return await job_result(ctx, _queued(job_id, None, None), args.get("wait", True))
+        started = time.monotonic()
+        job_id = await runner.submit_graph(args["workflow"], _progress(ctx))
+        return await job_result(ctx, _queued(job_id, None, None), args.get("wait", True), started)
 
     async def get_job(ctx: ServerRequestContext[Any], args: dict[str, Any]) -> types.CallToolResult:
         return await job_result(ctx, await runner.status(args["job_id"]), args.get("wait", True))
@@ -202,8 +209,9 @@ def create_mcp_server(services: Services) -> Server[Any]:
             workflow = registry.get(params.name)
             if workflow is None:
                 raise MCPError(types.INVALID_PARAMS, f"unknown tool {params.name!r}")
-            job_id, values = await runner.submit(workflow, args)
-            return await job_result(ctx, _queued(job_id, workflow.name, values), True)
+            started = time.monotonic()
+            job_id, values = await runner.submit(workflow, args, on_progress=_progress(ctx))
+            return await job_result(ctx, _queued(job_id, workflow.name, values), True, started)
         except WorkflowInputError as exc:
             return _text({"error": "invalid parameters", "problems": exc.problems}, is_error=True)
         except ComfyUIError as exc:
@@ -227,6 +235,15 @@ def create_mcp_server(services: Services) -> Server[Any]:
         on_list_tools=on_list_tools,
         on_call_tool=on_call_tool,
     )
+
+
+def _progress(ctx: ServerRequestContext[Any], offset: float = 0.0) -> ProgressCallback:
+    # Progress must only increase within a call, hence the offset for the
+    # wait that follows a submission.
+    async def report(elapsed: float, message: str) -> None:
+        await ctx.session.report_progress(offset + elapsed, None, message)
+
+    return report
 
 
 def _queued(job_id: str, workflow: str | None, values: dict[str, Any] | None) -> JobResult:

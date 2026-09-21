@@ -102,6 +102,11 @@ the job is queued or running. If the job is still going after that, the call
 returns its `job_id` with status `pending` or `running`, and `get_job` picks it
 up again.
 
+A ComfyUI cold start (e.g. llama-swap loading it on the first call) holds the
+submission open. The call keeps sending progress notifications meanwhile, and
+that time counts against the same `JOB_TIMEOUT`, so a slow start still returns
+a `job_id` before the client gives up instead of leaving the job orphaned.
+
 ```bash
 claude mcp add --transport http comfyui https://comfyui-mcp.example.com/mcp \
   --header "Authorization: Bearer $API_TOKEN"
@@ -137,7 +142,7 @@ parameters, `4xx`/`502` rejected by or unable to reach ComfyUI.
 | `COMFYUI_API_KEY` | | sent as `Authorization: Bearer` to ComfyUI or its proxy |
 | `COMFYUI_REQUEST_TIMEOUT` | `600` | seconds per ComfyUI request (cold starts behind llama-swap) |
 | `WORKFLOWS_DIR` | `/app/workflows` | `:`-separated directories; later ones win on name clash |
-| `JOB_TIMEOUT` | `110` | seconds a call waits for a job before returning its id; keep it below your MCP clients' tool timeout |
+| `JOB_TIMEOUT` | `110` | seconds a call waits, cold start included, before returning the job id; keep it below your MCP clients' tool timeout |
 | `POLL_INTERVAL` | `1` | seconds between status polls |
 | `API_TOKEN` | | require `Authorization: Bearer <token>` on `/mcp` and `/api` |
 | `PUBLIC_URL` | | external base URL used for output links |

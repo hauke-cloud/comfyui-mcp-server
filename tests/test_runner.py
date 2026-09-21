@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 
+import anyio
 import pytest
 
 from comfyui_mcp_server.comfyui import ComfyUIError
@@ -111,4 +112,44 @@ async def test_cancel_running_job(make_services, fake_comfyui) -> None:
     await services.runner.cancel(job_id)
     interrupt = next(r for r in fake_comfyui.requests if r.url.path.endswith("/interrupt"))
     assert json.loads(interrupt.content) == {"prompt_id": job_id}
+    await services.aclose()
+
+
+def _cold_start(services, seconds: float) -> None:
+    """Hold the first request open, as llama-swap does while ComfyUI starts."""
+    queue_prompt = services.client.queue_prompt
+
+    async def slow(graph):
+        await anyio.sleep(seconds)
+        return await queue_prompt(graph)
+
+    services.client.queue_prompt = slow
+
+
+async def test_submit_reports_progress_during_cold_start(make_services) -> None:
+    services = make_services()
+    _cold_start(services, 0.1)
+    reports: list[tuple[float, str]] = []
+
+    async def on_progress(elapsed: float, message: str) -> None:
+        reports.append((elapsed, message))
+
+    job_id, _ = await services.runner.submit(services.registry.get("txt2img"), {"prompt": "x"}, on_progress=on_progress)
+    assert job_id
+    assert len(reports) >= 3
+    assert all("starting up" in message for _, message in reports)
+    assert [elapsed for elapsed, _ in reports] == sorted(elapsed for elapsed, _ in reports)
+    await services.aclose()
+
+
+async def test_submit_errors_survive_the_heartbeat(make_services, fake_comfyui) -> None:
+    services = make_services()
+    _cold_start(services, 0.05)
+    fake_comfyui.reject_with = {"error": {"message": "Prompt outputs failed validation"}}
+
+    async def on_progress(elapsed: float, message: str) -> None:
+        pass
+
+    with pytest.raises(ComfyUIError, match="failed validation"):
+        await services.runner.submit(services.registry.get("txt2img"), {"prompt": "x"}, on_progress=on_progress)
     await services.aclose()

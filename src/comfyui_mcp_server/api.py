@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 from starlette.requests import Request
@@ -67,10 +68,12 @@ def create_routes(services: Services) -> list[Route]:
         else:
             parameters, overrides = body, None
         try:
+            started = time.monotonic()
             job_id, _ = await runner.submit(workflow, parameters, overrides)
             result = await runner.status(job_id)
             if _wait_flag(request, default=True):
-                result = await runner.wait(job_id, settings.job_timeout)
+                # A ComfyUI cold start during submission counts against the same budget.
+                result = await runner.wait(job_id, max(settings.job_timeout - (time.monotonic() - started), 0.0))
         except WorkflowInputError as exc:
             return JSONResponse({"error": "invalid parameters", "problems": exc.problems}, status_code=422)
         except ComfyUIError as exc:

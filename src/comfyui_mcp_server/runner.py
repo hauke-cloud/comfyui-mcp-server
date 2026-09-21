@@ -11,7 +11,7 @@ import uuid
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, TypeVar
 from urllib.parse import urlencode
 
 import anyio
@@ -29,6 +29,7 @@ MAX_URL_INPUT_BYTES = 50 * 1024 * 1024
 LOST_AFTER_POLLS = 3
 
 ProgressCallback = Callable[[float, str], Awaitable[None]]
+T = TypeVar("T")
 
 
 @dataclass
@@ -90,8 +91,14 @@ class Runner:
         workflow: Workflow,
         parameters: dict[str, Any] | None = None,
         overrides: dict[str, Any] | None = None,
+        on_progress: ProgressCallback | None = None,
     ) -> tuple[str, dict[str, Any]]:
         values = workflow.validate(parameters)
+        return await self._heartbeat(self._submit(workflow, values, overrides), on_progress)
+
+    async def _submit(
+        self, workflow: Workflow, values: dict[str, Any], overrides: dict[str, Any] | None
+    ) -> tuple[str, dict[str, Any]]:
         for name, value in list(values.items()):
             if workflow.parameters[name].type == "image":
                 values[name] = await self.resolve_image(name, value)
@@ -101,10 +108,40 @@ class Runner:
         logger.info("queued workflow %s as job %s", workflow.name, job_id)
         return job_id, values
 
-    async def submit_graph(self, graph: dict[str, Any]) -> str:
-        job_id = await self.client.queue_prompt(graph)
+    async def submit_graph(self, graph: dict[str, Any], on_progress: ProgressCallback | None = None) -> str:
+        job_id = await self._heartbeat(self.client.queue_prompt(graph), on_progress)
         self._remember(job_id, _JobInfo(None, [], None))
         return job_id
+
+    async def _heartbeat(self, call: Awaitable[T], on_progress: ProgressCallback | None) -> T:
+        """Await a submission, reporting progress while ComfyUI keeps us waiting.
+
+        Behind llama-swap the first request after idle cold-starts ComfyUI and
+        is held open until it is ready, which can take a minute or more. The
+        notifications keep clients that reset their timeout on progress from
+        giving up meanwhile.
+        """
+        if on_progress is None:
+            return await call
+        outcome: list[T] = []
+        failure: list[Exception] = []
+
+        async def run() -> None:
+            try:
+                outcome.append(await call)
+            except Exception as exc:  # noqa: BLE001 - re-raised below, unwrapped from the task group
+                failure.append(exc)
+            tg.cancel_scope.cancel()
+
+        started = time.monotonic()
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(run)
+            while True:
+                await anyio.sleep(self.settings.poll_interval)
+                await on_progress(time.monotonic() - started, "waiting for ComfyUI to accept the job (starting up?)")
+        if failure:
+            raise failure[0]
+        return outcome[0]
 
     async def status(self, job_id: str) -> JobResult:
         info = self._jobs.get(job_id, _JobInfo(None, [], None))

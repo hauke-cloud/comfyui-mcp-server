@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import base64
+import time
 from contextlib import asynccontextmanager
 from dataclasses import replace
 
+import anyio
 import httpx2
 from mcp import Client
 
@@ -120,3 +122,28 @@ async def test_mcp_raw_workflows_opt_in(make_services) -> None:
         result = await client.call_tool("run_raw_workflow", {"workflow": graph})
         assert result.structured_content["status"] == "completed"
         assert all(block.type == "text" for block in result.content)
+
+
+async def test_mcp_cold_start_counts_against_job_timeout(make_services, fake_comfyui) -> None:
+    services = make_services(job_timeout=0.3)
+    fake_comfyui.polls_until_done = 10_000
+    queue_prompt = services.client.queue_prompt
+
+    async def cold_start(graph):
+        await anyio.sleep(0.5)
+        return await queue_prompt(graph)
+
+    services.client.queue_prompt = cold_start
+    reports: list[tuple[float, str | None]] = []
+
+    async def on_progress(progress: float, total: float | None, message: str | None) -> None:
+        reports.append((progress, message))
+
+    async with Client(create_mcp_server(services)) as client:
+        started = time.monotonic()
+        result = await client.call_tool("txt2img", {"prompt": "x"}, progress_callback=on_progress)
+        # The cold start used up the budget, so the job id comes back without further waiting.
+        assert time.monotonic() - started < 1.0
+    assert result.structured_content["status"] == "running"
+    assert "get_job" in result.content[1].text
+    assert any("starting up" in (message or "") for _, message in reports)
